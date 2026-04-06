@@ -17,6 +17,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 import {
   CONTAINER_RUNTIME_BIN,
@@ -212,13 +213,17 @@ function buildVolumeMounts(
     'agent-runner-src',
   );
   if (fs.existsSync(agentRunnerSrc)) {
-    const srcIndex = path.join(agentRunnerSrc, 'index.ts');
-    const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
+    // Check if any source file is newer than the cached copy
     const needsCopy =
       !fs.existsSync(groupAgentRunnerDir) ||
-      !fs.existsSync(cachedIndex) ||
-      (fs.existsSync(srcIndex) &&
-        fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
+      fs.readdirSync(agentRunnerSrc)
+        .filter((f) => f.endsWith('.ts'))
+        .some((f) => {
+          const src = path.join(agentRunnerSrc, f);
+          const cached = path.join(groupAgentRunnerDir, f);
+          return !fs.existsSync(cached) ||
+            fs.statSync(src).mtimeMs > fs.statSync(cached).mtimeMs;
+        });
     if (needsCopy) {
       fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
     }
@@ -252,19 +257,34 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Pass OAuth token to container if present (for Claude subscription auth)
+  const envSecrets = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'GITHUB_TOKEN']);
+  const hasOAuthToken = !!envSecrets.CLAUDE_CODE_OAUTH_TOKEN;
+  if (hasOAuthToken) {
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${envSecrets.CLAUDE_CODE_OAUTH_TOKEN}`);
+  }
+  if (envSecrets.GITHUB_TOKEN) {
+    args.push('-e', `GITHUB_TOKEN=${envSecrets.GITHUB_TOKEN}`);
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
-  const onecliApplied = await onecli.applyContainerConfig(args, {
-    addHostMapping: false, // Nanoclaw already handles host gateway
-    agent: agentIdentifier,
-  });
-  if (onecliApplied) {
-    logger.info({ containerName }, 'OneCLI gateway config applied');
+  // Skip OneCLI when using OAuth token — the proxy interferes with OAuth auth flow.
+  if (!hasOAuthToken) {
+    const onecliApplied = await onecli.applyContainerConfig(args, {
+      addHostMapping: false, // Nanoclaw already handles host gateway
+      agent: agentIdentifier,
+    });
+    if (onecliApplied) {
+      logger.info({ containerName }, 'OneCLI gateway config applied');
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI gateway not reachable — container will have no credentials',
+      );
+    }
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    logger.info({ containerName }, 'Using OAuth token — OneCLI proxy skipped');
   }
 
   // Runtime-specific args for host gateway resolution

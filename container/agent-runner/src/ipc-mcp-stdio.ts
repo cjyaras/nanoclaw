@@ -44,6 +44,12 @@ server.tool(
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
     text: z.string().describe('The message text to send'),
+    image: z
+      .string()
+      .optional()
+      .describe(
+        'Path to an image file in /workspace/group/ to send. The image is sent first, then the text as caption. Example: /workspace/group/chart.png',
+      ),
     sender: z
       .string()
       .optional()
@@ -56,6 +62,7 @@ server.tool(
       type: 'message',
       chatJid,
       text: args.text,
+      image: args.image || undefined,
       sender: args.sender || undefined,
       groupFolder,
       timestamp: new Date().toISOString(),

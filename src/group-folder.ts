@@ -35,6 +35,25 @@ export function resolveGroupFolderPath(folder: string): string {
   return groupPath;
 }
 
+/**
+ * Map a container path (e.g. /workspace/group/images/chart.png) to the
+ * corresponding host path within the group's directory.
+ * Returns null if the path is outside /workspace/group/ or traverses upward.
+ */
+export function resolveContainerPathToHost(
+  containerPath: string,
+  groupFolder: string,
+): string | null {
+  if (!containerPath.startsWith('/workspace/group/')) return null;
+  const relative = containerPath.slice('/workspace/group/'.length);
+  if (relative.includes('..')) return null;
+  const hostPath = path.resolve(GROUPS_DIR, groupFolder, relative);
+  const baseDir = path.resolve(GROUPS_DIR, groupFolder);
+  const rel = path.relative(baseDir, hostPath);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return hostPath;
+}
+
 export function resolveGroupIpcPath(folder: string): string {
   assertValidGroupFolder(folder);
   const ipcBaseDir = path.resolve(DATA_DIR, 'ipc');

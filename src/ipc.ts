@@ -6,12 +6,13 @@ import { CronExpressionParser } from 'cron-parser';
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { isValidGroupFolder, resolveContainerPathToHost } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendImage?: (jid: string, imagePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -81,7 +82,25 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  // Send image if present
+                  if (data.image && deps.sendImage) {
+                    const hostPath = resolveContainerPathToHost(data.image, sourceGroup);
+                    if (hostPath && fs.existsSync(hostPath)) {
+                      await deps.sendImage(data.chatJid, hostPath, data.text);
+                      logger.info(
+                        { chatJid: data.chatJid, sourceGroup, image: data.image },
+                        'IPC image sent',
+                      );
+                    } else {
+                      logger.warn(
+                        { chatJid: data.chatJid, image: data.image },
+                        'IPC image not found on host, sending text only',
+                      );
+                      await deps.sendMessage(data.chatJid, data.text);
+                    }
+                  } else {
+                    await deps.sendMessage(data.chatJid, data.text);
+                  }
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC message sent',
